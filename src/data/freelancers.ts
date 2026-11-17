@@ -9,7 +9,7 @@ export type Freelancer = {
   otherSkills: number;
   location: string;
   rate: string;
-  accent: "yellow" | "teal" | "cyan";
+  accent: "yellow" | "teal" | "cyan" | "blue";
 };
 
 // Placeholder content from the Figma file until the API is wired up.

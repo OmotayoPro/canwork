@@ -26,7 +26,7 @@ export function Navbar() {
           />
         </Link>
 
-        <ul className="absolute top-1/2 left-1/2 hidden -translate-x-1/2 -translate-y-1/2 items-start gap-10 lg:flex">
+        <ul className="absolute top-1/2 left-1/2 hidden -translate-x-1/2 -translate-y-1/2 items-start gap-10 xl:flex">
           {menu.map((item) => (
             <li key={item.label}>
               <ButtonLink href={item.href} variant="ghost" size="sm" className="text-g0">

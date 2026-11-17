@@ -9,9 +9,11 @@
 
   /* Greys (G0–G900) */
   --color-g0: #ffffff;
+  --color-g50: #f8fafc;
   --color-g100: #f1f5f9;
   --color-g200: #e2e8f0;
   --color-g300: #cbd5e1;
+  --color-g400: #94a3b8;
   --color-g500: #64748b;
   --color-g600: #475569;
   --color-g700: #334155;
@@ -19,6 +21,7 @@
   --color-g900: #0f172a;
 
   /* Brand cyan */
+  --color-brand-c100: #ebf9ff;
   --color-brand-c200: #aee6ff;
   --color-brand-c300: #8ddcff;
   --color-brand-c400: #5bccff;
@@ -28,6 +31,7 @@
   /* Accent tops used on profile cards */
   --color-accent-yellow: #ffc600;
   --color-accent-teal: #2ce8da;
+  --color-accent-blue: #017ad0;
 
   --shadow-btn: 0px 2px 2px -1px rgba(0, 0, 0, 0.1), 0px 4px 10px -2px rgba(0, 0, 0, 0.05);
 }
