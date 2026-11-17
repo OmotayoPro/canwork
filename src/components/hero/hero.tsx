@@ -4,15 +4,18 @@ import { useRef } from "react";
 import { Navbar } from "@/components/navbar";
 import { HeroSearch } from "@/components/search/hero-search";
 import { GradientShader, type GradientShaderHandle } from "./gradient-shader";
-import { DEFAULT_SHADER_SETTINGS } from "./shader-settings";
+import { ShaderControls } from "./shader-controls";
+import { useShaderSettings } from "./use-shader-settings";
 
 export function Hero() {
   const sectionRef = useRef<HTMLElement>(null);
   const shaderRef = useRef<GradientShaderHandle>(null);
+  const shader = useShaderSettings();
 
   return (
     <section ref={sectionRef} className="relative isolate overflow-hidden lg:h-[654px]">
-      <GradientShader ref={shaderRef} settings={DEFAULT_SHADER_SETTINGS} className="absolute inset-0 -z-10" />
+      <GradientShader ref={shaderRef} settings={shader.settings} className="absolute inset-0 -z-10" />
+      {shader.showControls && <ShaderControls settings={shader.settings} onChange={shader.update} />}
 
       <Navbar />
 

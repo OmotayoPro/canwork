@@ -36,6 +36,9 @@ uniform float uWavePhase;   // travelling sine-wave phase (accumulated in JS)
 uniform float uWaveAmp, uWaveFreq, uTurbulence;
 uniform float uFlowAngle, uScale, uWarp, uVertical, uContrast, uOffset;
 uniform float uBands, uBandSharp, uBandStrength, uSheen, uGrain;
+uniform float uRibbonCount, uRibbonOpacity, uRibbonAmp, uRibbonFreq, uRibbonSoft;
+uniform float uRibbonPhase, uRibbonPos, uRibbonSpacing, uRibbonTilt, uRibbonShadow;
+uniform vec3  uRibbonColor;
 
 #define TAU 6.28318530718
 
@@ -135,6 +138,28 @@ void main() {
   vec3 col = palette(t);
   col = mix(col, vec3(1.0), crest * uSheen * on);
 
+  // ---- Wavy layer: soft stacked waves, front wave lowest and strongest ----
+  // Drawn back to front so nearer waves cover the ones behind them.
+  for (int i = 0; i < 6; i++) {
+    float li = uRibbonCount - 1.0 - float(i);   // layer index: 0 = front (lowest)
+    if (li < 0.0) break;
+    float x = uv.x;
+    float ph = uRibbonPhase * (1.0 + li * 0.3) + li * 1.9;
+    float crest = sin(x * TAU * uRibbonFreq * (1.0 + li * 0.18) + ph)
+                + 0.35 * sin(x * TAU * uRibbonFreq * 2.3 + ph * 1.4 + li * 2.7);
+    float edge = uRibbonPos + li * uRibbonSpacing + (x - 0.5) * uRibbonTilt + uRibbonAmp * crest / 1.35;
+    float soft = max(uRibbonSoft, 0.001);
+    float depth = edge - uv.y;                  // > 0 inside (below) the wave
+    float inside = smoothstep(-soft, soft, depth);
+    // Lightest along the crest, settling to a translucent body deeper in, like light catching a fold.
+    float rim = exp(-max(depth, 0.0) / 0.14);
+    float layerOpacity = uRibbonOpacity * (1.0 - li * 0.14);
+    // A soft shadow just above each crest separates the layers.
+    float shadow = (1.0 - inside) * exp(-max(-depth, 0.0) / (soft + 0.05)) * uRibbonShadow * layerOpacity;
+    col *= 1.0 - shadow;
+    col = mix(col, uRibbonColor, clamp(inside * mix(0.4, 1.0, rim) * layerOpacity, 0.0, 1.0));
+  }
+
   // ---- Ripple glow + grain ----
   col += vec3(0.67, 0.9, 1.0) * glow * 0.32;
   col += (hash(gl_FragCoord.xy + fract(uTime * 7.0)) - 0.5) * uGrain;
@@ -225,6 +250,10 @@ export function GradientShader({
       flowAngle: u("uFlowAngle"), scale: u("uScale"), warp: u("uWarp"), vertical: u("uVertical"),
       contrast: u("uContrast"), offset: u("uOffset"), bands: u("uBands"), bandSharp: u("uBandSharp"),
       bandStrength: u("uBandStrength"), sheen: u("uSheen"), grain: u("uGrain"),
+      ribbonCount: u("uRibbonCount"), ribbonOpacity: u("uRibbonOpacity"), ribbonAmp: u("uRibbonAmp"),
+      ribbonFreq: u("uRibbonFreq"), ribbonSoft: u("uRibbonSoft"), ribbonPhase: u("uRibbonPhase"),
+      ribbonPos: u("uRibbonPos"), ribbonSpacing: u("uRibbonSpacing"), ribbonTilt: u("uRibbonTilt"), ribbonShadow: u("uRibbonShadow"),
+      ribbonColor: u("uRibbonColor"),
     };
 
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -234,6 +263,7 @@ export function GradientShader({
     let loopTime = 6; // seconds into the churn loop
     let drift = 0; // forward distance, noise units
     let wavePhase = 0; // radians
+    let ribbonPhase = 0; // radians
     let clock = 0;
     let last = performance.now();
 
@@ -279,6 +309,17 @@ export function GradientShader({
       gl.uniform1f(loc.bandStrength, s.bandStrength);
       gl.uniform1f(loc.sheen, s.sheen);
       gl.uniform1f(loc.grain, s.grain);
+      gl.uniform1f(loc.ribbonCount, s.ribbonCount);
+      gl.uniform1f(loc.ribbonOpacity, s.ribbonOpacity);
+      gl.uniform1f(loc.ribbonAmp, s.ribbonAmplitude);
+      gl.uniform1f(loc.ribbonFreq, s.ribbonFrequency);
+      gl.uniform1f(loc.ribbonSoft, s.ribbonSoftness);
+      gl.uniform1f(loc.ribbonPhase, ribbonPhase);
+      gl.uniform1f(loc.ribbonPos, s.ribbonPosition);
+      gl.uniform1f(loc.ribbonSpacing, s.ribbonSpacing);
+      gl.uniform1f(loc.ribbonTilt, s.ribbonTilt);
+      gl.uniform1f(loc.ribbonShadow, s.ribbonShadow);
+      gl.uniform3fv(loc.ribbonColor, hexToRgb(s.ribbonColor));
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     };
 
@@ -296,6 +337,8 @@ export function GradientShader({
         // Accumulated (not time × speed) so dragging a slider never makes the field jump.
         drift = (drift + t * s.flowSpeed * 0.25) % 1000;
         wavePhase = (wavePhase + t * s.waveSpeed * Math.PI * 0.5) % (Math.PI * 2);
+        // Kept below a large multiple of 2π so float precision holds; the waves' phase multipliers aren't integers.
+        ribbonPhase = (ribbonPhase + t * s.ribbonSpeed) % (Math.PI * 2000);
       }
       draw(now);
       canvas.dataset.ready = "true";
@@ -353,6 +396,8 @@ export function GradientShader({
         ref={canvasRef}
         className="block size-full opacity-0 transition-opacity duration-500 data-[ready=true]:opacity-100"
       />
+      {/* Black overlay for text contrast — over the canvas and the CSS fallback alike. */}
+      <div className="absolute inset-0 bg-black" style={{ opacity: settings.overlay }} />
     </div>
   );
 }
