@@ -9,7 +9,7 @@ export type GradientShaderHandle = {
   ripple: (x: number, y: number) => void;
 };
 
-/** Seconds (at speed 1) for one full cycle. Motion runs on a circle in noise space, so it loops seamlessly. */
+/** Seconds (at speed 1) for one cycle of the in-place churn (turbulence), which runs on a circle in noise space. */
 const LOOP_SECONDS = 30;
 /** Seconds the ripple stays alive (envelope has fully decayed by then). */
 export const RIPPLE_SECONDS = 1.8;
@@ -31,6 +31,9 @@ uniform vec4  uRipple;     // xy: origin (device px, GL coords), z: seconds sinc
 uniform float uRippleSpeed;
 
 uniform vec3 uC0; uniform vec3 uC1; uniform vec3 uC2; uniform vec3 uC3; uniform vec3 uC4;
+uniform float uDrift;       // forward distance travelled along the flow (accumulated in JS)
+uniform float uWavePhase;   // travelling sine-wave phase (accumulated in JS)
+uniform float uWaveAmp, uWaveFreq, uTurbulence;
 uniform float uFlowAngle, uScale, uWarp, uVertical, uContrast, uOffset;
 uniform float uBands, uBandSharp, uBandStrength, uSheen, uGrain;
 
@@ -68,7 +71,7 @@ float fbm(vec2 p) {
 }
 
 // A point moving on a circle: sampling noise along it makes the animation loop exactly.
-vec2 orbit(float phase, float r) { return r * vec2(cos(uPhase + phase), sin(uPhase + phase)); }
+vec2 orbit(float phase, float r) { return uTurbulence * r * vec2(cos(uPhase + phase), sin(uPhase + phase)); }
 
 vec3 palette(float t) {
   t = clamp(t, 0.0, 1.0) * 4.0;
@@ -101,16 +104,23 @@ void main() {
 
   vec2 uv = fc / uRes;                       // 0..1, y up
   float aspect = uRes.x / uRes.y;
-  vec2 p = (uv - 0.5) * vec2(aspect, 1.0);
+  // Rotate into flow space: +x points along the flow direction, +y across it.
   float ca = cos(uFlowAngle), sa = sin(uFlowAngle);
-  p = mat2(ca, -sa, sa, ca) * p * uScale * 0.55; // 0.55: scale 1 ≈ two or three large forms across the hero
+  vec2 s = mat2(ca, -sa, sa, ca) * ((uv - 0.5) * vec2(aspect, 1.0));
+
+  // Sinusoidal flow: a wave travelling forward bends the liquid sideways.
+  s.y += uWaveAmp * 0.3 * sin(s.x * uWaveFreq * TAU / aspect - uWavePhase);
+
+  // Forward flow: the whole field drifts along +x.
+  vec2 p = s * uScale * 0.55; // 0.55: scale 1 ≈ two or three large forms across the hero
+  p.x -= uDrift;
 
   // ---- Liquid field: two levels of domain warping ----
   vec2 q = vec2(fbm(p + orbit(0.0, 0.6)),
                 fbm(p + vec2(5.2, 1.3) + orbit(2.1, 0.6)));
   vec2 r = vec2(fbm(p + uWarp * q + vec2(1.7, 9.2) + orbit(4.2, 0.4)),
                 fbm(p + uWarp * q + vec2(8.3, 2.8) + orbit(1.0, 0.4)));
-  float f = fbm(p + uWarp * r);
+  float f = fbm(p + uWarp * r - vec2(uDrift * 0.35, 0.0));
 
   // ---- Map to the palette ----
   float field = clamp((f * 0.5) * uContrast + 0.5, 0.0, 1.0);
@@ -210,6 +220,8 @@ export function GradientShader({
       res: u("uRes"), dpr: u("uDpr"), phase: u("uPhase"), time: u("uTime"),
       ripple: u("uRipple"), rippleSpeed: u("uRippleSpeed"),
       colors: [u("uC0"), u("uC1"), u("uC2"), u("uC3"), u("uC4")],
+      drift: u("uDrift"), wavePhase: u("uWavePhase"), waveAmp: u("uWaveAmp"), waveFreq: u("uWaveFreq"),
+      turbulence: u("uTurbulence"),
       flowAngle: u("uFlowAngle"), scale: u("uScale"), warp: u("uWarp"), vertical: u("uVertical"),
       contrast: u("uContrast"), offset: u("uOffset"), bands: u("uBands"), bandSharp: u("uBandSharp"),
       bandStrength: u("uBandStrength"), sheen: u("uSheen"), grain: u("uGrain"),
@@ -219,7 +231,9 @@ export function GradientShader({
     let dpr = 1;
     let raf = 0;
     let visible = true;
-    let loopTime = 6; // seconds into the loop
+    let loopTime = 6; // seconds into the churn loop
+    let drift = 0; // forward distance, noise units
+    let wavePhase = 0; // radians
     let clock = 0;
     let last = performance.now();
 
@@ -245,6 +259,11 @@ export function GradientShader({
       gl.uniform2f(loc.res, canvas.width, canvas.height);
       gl.uniform1f(loc.dpr, dpr);
       gl.uniform1f(loc.phase, (loopTime / LOOP_SECONDS) * Math.PI * 2);
+      gl.uniform1f(loc.drift, drift);
+      gl.uniform1f(loc.wavePhase, wavePhase);
+      gl.uniform1f(loc.waveAmp, s.waveAmplitude);
+      gl.uniform1f(loc.waveFreq, s.waveFrequency);
+      gl.uniform1f(loc.turbulence, s.turbulence);
       gl.uniform1f(loc.time, clock);
       gl.uniform4f(loc.ripple, r ? r.x * dpr : 0, r ? canvas.height - r.y * dpr : 0, rippleT, s.rippleStrength);
       gl.uniform1f(loc.rippleSpeed, s.rippleSpeed);
@@ -270,7 +289,14 @@ export function GradientShader({
       const dt = Math.min((now - last) / 1000, 0.1);
       last = now;
       clock += dt;
-      if (moving()) loopTime = (loopTime + dt * settingsRef.current.speed) % LOOP_SECONDS;
+      if (moving()) {
+        const s = settingsRef.current;
+        const t = dt * s.speed;
+        loopTime = (loopTime + t) % LOOP_SECONDS;
+        // Accumulated (not time × speed) so dragging a slider never makes the field jump.
+        drift = (drift + t * s.flowSpeed * 0.25) % 1000;
+        wavePhase = (wavePhase + t * s.waveSpeed * Math.PI * 0.5) % (Math.PI * 2);
+      }
       draw(now);
       canvas.dataset.ready = "true";
       if (visible && (moving() || rippleRef.current !== null)) raf = requestAnimationFrame(frame);

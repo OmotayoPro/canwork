@@ -3,10 +3,20 @@ export type ShaderColors = [string, string, string, string, string];
 export type ShaderSettings = {
   /** Five gradient stops, mapped from the top of the hero (first) to the bottom (last). */
   colors: ShaderColors;
-  /** Motion speed multiplier. 0 freezes the flow. */
+  /** Master motion multiplier. 0 freezes everything. */
   speed: number;
-  /** Rotates the flow field, in degrees. */
+  /** Direction the liquid flows in, in degrees (0 = left → right, 90 = bottom → top). */
   flowAngle: number;
+  /** How fast the liquid drifts forward along the flow angle. 0 = no drift. */
+  flowSpeed: number;
+  /** Sideways sway of a sine wave travelling along the flow. 0 = no wave. */
+  waveAmplitude: number;
+  /** How many wave crests fit across the hero. */
+  waveFrequency: number;
+  /** How fast the sine wave travels forward. */
+  waveSpeed: number;
+  /** In-place churning of the liquid, on top of the directional motion. */
+  turbulence: number;
   /** Zoom of the liquid field. Higher = smaller, busier shapes. */
   scale: number;
   /** Domain-warp strength. Higher = more liquid / swirly. */
@@ -36,7 +46,12 @@ export type ShaderSettings = {
 export const DEFAULT_SHADER_SETTINGS: ShaderSettings = {
   colors: ["#0458be", "#0b8ee3", "#3cc2f4", "#2cd9cf", "#8af2cc"],
   speed: 1,
-  flowAngle: 20,
+  flowAngle: 0,
+  flowSpeed: 0.35,
+  waveAmplitude: 0.3,
+  waveFrequency: 1.2,
+  waveSpeed: 0.6,
+  turbulence: 0.35,
   scale: 0.8,
   warp: 1.1,
   vertical: 0.55,
@@ -60,8 +75,13 @@ export const SHADER_CONTROLS: { title: string; sliders: SliderSpec[] }[] = [
   {
     title: "Motion",
     sliders: [
-      { key: "speed", label: "Speed", min: 0, max: 4, step: 0.05 },
-      { key: "flowAngle", label: "Flow angle", min: 0, max: 360, step: 1 },
+      { key: "speed", label: "Speed (master)", min: 0, max: 4, step: 0.05 },
+      { key: "flowAngle", label: "Flow direction (°)", min: 0, max: 360, step: 1 },
+      { key: "flowSpeed", label: "Forward flow", min: 0, max: 2, step: 0.01 },
+      { key: "waveAmplitude", label: "Sine sway", min: 0, max: 1.5, step: 0.01 },
+      { key: "waveFrequency", label: "Sine frequency", min: 0.1, max: 6, step: 0.05 },
+      { key: "waveSpeed", label: "Sine speed", min: 0, max: 3, step: 0.05 },
+      { key: "turbulence", label: "Turbulence", min: 0, max: 1.5, step: 0.01 },
     ],
   },
   {
