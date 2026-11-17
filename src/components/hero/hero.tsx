@@ -55,7 +55,17 @@ export function Hero() {
   const inputRef = useRef<HTMLInputElement>(null);
   const shaderRef = useRef<GradientShaderHandle>(null);
   const [query, setQuery] = useState("");
-  const [searching, setSearching] = useState(false);
+  // A ref, not state: the button must never look disabled, and Next keeps this page's state
+  // alive on back-navigation — so the guard is cleared whenever the hero is hidden/unmounted.
+  const searchingRef = useRef(false);
+  const navTimer = useRef<number>(undefined);
+  useEffect(
+    () => () => {
+      searchingRef.current = false;
+      window.clearTimeout(navTimer.current);
+    },
+    [],
+  );
   const shader = useShaderSettings();
 
   function search(term: string, origin: Element | null) {
@@ -64,7 +74,7 @@ export function Hero() {
       inputRef.current?.focus();
       return;
     }
-    if (searching) return;
+    if (searchingRef.current) return;
 
     const url = `/search?q=${encodeURIComponent(q)}`;
     router.prefetch(url);
@@ -77,8 +87,8 @@ export function Hero() {
       shaderRef.current?.ripple(o.left + o.width / 2 - s.left, o.top + o.height / 2 - s.top);
     }
 
-    setSearching(true);
-    window.setTimeout(() => router.push(url), reduceMotion ? 0 : NAVIGATE_AFTER_MS);
+    searchingRef.current = true;
+    navTimer.current = window.setTimeout(() => router.push(url), reduceMotion ? 0 : NAVIGATE_AFTER_MS);
   }
 
   function onSubmit(e: FormEvent<HTMLFormElement>) {
@@ -109,7 +119,7 @@ export function Hero() {
           <div className="flex w-full flex-col items-center gap-6">
             <form role="search" onSubmit={onSubmit} className="w-full">
               <div ref={barRef} className="flex w-full items-center">
-                <label className="-mr-4 flex min-w-0 flex-1 items-center rounded-[10px] bg-g0 py-2.5 pr-8 pl-4 transition-shadow duration-150 focus-within:shadow-[0_0_0_3px_rgb(255_255_255/0.35)] sm:pr-20 sm:pl-10">
+                <label className="-mr-4 flex min-w-0 flex-1 items-center rounded-[10px] bg-g0 py-2.5 pr-8 pl-4 sm:pr-20 sm:pl-10">
                   <span className="sr-only">Search for freelancers</span>
                   <input
                     ref={inputRef}
@@ -123,7 +133,7 @@ export function Hero() {
                     className="w-full min-w-0 bg-transparent text-[16px] leading-6 text-g900 outline-none placeholder:text-g500 [&::-webkit-search-cancel-button]:hidden"
                   />
                 </label>
-                <Button type="submit" size="md" className="relative px-6 sm:px-10" disabled={searching}>
+                <Button type="submit" size="md" className="relative px-6 sm:px-10">
                   Search
                 </Button>
               </div>
