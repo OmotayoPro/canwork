@@ -1,0 +1,53 @@
+@import "tailwindcss";
+
+/*
+ * Canwork (classic) design tokens — taken from the old Canwork Figma file.
+ * These are intentionally separate from the newer Canwork Escrow system.
+ */
+@theme {
+  --font-sans: var(--font-general-sans), ui-sans-serif, system-ui, sans-serif;
+
+  /* Greys (G0–G900) */
+  --color-g0: #ffffff;
+  --color-g100: #f1f5f9;
+  --color-g200: #e2e8f0;
+  --color-g300: #cbd5e1;
+  --color-g500: #64748b;
+  --color-g600: #475569;
+  --color-g700: #334155;
+  --color-g800: #1e293b;
+  --color-g900: #0f172a;
+
+  /* Brand cyan */
+  --color-brand-c200: #aee6ff;
+  --color-brand-c300: #8ddcff;
+  --color-brand-c400: #5bccff;
+  --color-brand-c500: #3ac2ff;
+  --color-brand-c800: #005e89;
+
+  /* Accent tops used on profile cards */
+  --color-accent-yellow: #ffc600;
+  --color-accent-teal: #2ce8da;
+
+  --shadow-btn: 0px 2px 2px -1px rgba(0, 0, 0, 0.1), 0px 4px 10px -2px rgba(0, 0, 0, 0.05);
+}
+
+html {
+  color-scheme: light;
+}
+
+body {
+  background: var(--color-g0);
+  color: var(--color-g900);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
