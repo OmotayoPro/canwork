@@ -1,17 +1,23 @@
 "use client";
 
 import Image from "next/image";
-import { useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ProfileCard } from "@/components/featured-freelancers/profile-card";
-import { Button } from "@/components/ui/button";
 import { Tag } from "@/components/ui/tag";
 import { EMPTY_FILTERS, filterResults, RATE_RANGES, searchResults, type SearchFilters, type SearchResult } from "@/data/search";
+import { profileHref } from "@/data/profile";
 import { cn } from "@/lib/cn";
 import { FilterChip } from "./filter-chip";
 import { Pagination } from "./pagination";
-import { filterCount, SearchFiltersPanel } from "./search-filters";
+import { ResultCardSkeleton, ResultRowSkeleton } from "./result-skeleton";
+import { SearchEmptyState } from "./search-empty-state";
+import { SearchFiltersPanel } from "./search-filters";
 
 const PAGE_SIZE = 12;
+/** Placeholder latency so the loading state is visible until results come from the API. */
+const FAKE_LATENCY_MS = 700;
 type View = "grid" | "list";
 
 /** One removable chip per active filter value, in sidebar order. */
@@ -34,6 +40,16 @@ export function SearchResults({ query }: { query: string }) {
   const [paging, setPaging] = useState({ query, filters, page: 1 });
   const page = paging.query === query && paging.filters === filters ? paging.page : 1;
   const topRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
+
+  // Every new query / filter combination "fetches" — show skeletons until it lands.
+  const requestKey = `${query}\u0000${JSON.stringify(filters)}`;
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
+  const loading = loadedKey !== requestKey;
+  useEffect(() => {
+    const t = window.setTimeout(() => setLoadedKey(requestKey), FAKE_LATENCY_MS);
+    return () => window.clearTimeout(t);
+  }, [requestKey]);
 
   const results = useMemo(() => filterResults(searchResults, query, filters), [query, filters]);
   const pages = Math.max(1, Math.ceil(results.length / PAGE_SIZE));
@@ -48,7 +64,14 @@ export function SearchResults({ query }: { query: string }) {
     if (top && top.getBoundingClientRect().top < 0) top.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
   }
 
-  const heading = query.trim()
+  function seeTopFreelancers() {
+    setFiltersState(EMPTY_FILTERS);
+    if (query) router.push("/search");
+  }
+
+  const heading = loading
+    ? "Loading..."
+    : query.trim()
     ? `${results.length} Result${results.length === 1 ? "" : "s"} for ${query.trim()}`
     : `${results.length} Freelancer${results.length === 1 ? "" : "s"}`;
 
@@ -76,7 +99,22 @@ export function SearchResults({ query }: { query: string }) {
           )}
         </div>
 
-        {visible.length ? (
+        {loading ? (
+          <ul
+            aria-busy
+            aria-label="Loading results"
+            className={cn(
+              "grid gap-6",
+              view === "grid" ? "grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))]" : "grid-cols-1 gap-4",
+            )}
+          >
+            {Array.from({ length: PAGE_SIZE }, (_, i) => (
+              <li key={i} className="flex">
+                {view === "grid" ? <ResultCardSkeleton /> : <ResultRowSkeleton />}
+              </li>
+            ))}
+          </ul>
+        ) : visible.length ? (
           <ul
             className={cn(
               "grid gap-6",
@@ -90,16 +128,14 @@ export function SearchResults({ query }: { query: string }) {
             ))}
           </ul>
         ) : (
-          <EmptyState
-            query={query}
-            hasFilters={filterCount(filters) > 0}
-            onClear={() => setFiltersState(EMPTY_FILTERS)}
-          />
+          <SearchEmptyState onSeeTop={seeTopFreelancers} />
         )}
 
-        <div className="pt-6">
-          <Pagination page={current} total={pages} onChange={goTo} />
-        </div>
+        {(loading || visible.length > 0) && (
+          <div className="pt-6">
+            <Pagination page={current} total={pages} onChange={goTo} />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -126,16 +162,20 @@ function ViewButton({ icon, label, active, onClick }: { icon: string; label: str
 
 /** Compact horizontal layout for the list view (not in the Figma file — derived from the card). */
 function ResultRow({ freelancer }: { freelancer: SearchResult }) {
-  const { name, title, avatar, rating, jobs, topSkill, otherSkills, location, rate } = freelancer;
+  const { id, name, title, avatar, rating, jobs, topSkill, otherSkills, location, rate } = freelancer;
   return (
-    <article className="flex w-full flex-col gap-4 rounded-xl border border-g200 bg-g0 p-4 sm:flex-row sm:items-center sm:gap-6 sm:px-6">
+    <article className="relative flex w-full transition-shadow duration-200 ease-out has-[a:hover]:shadow-[0_8px_24px_-8px_rgba(15,23,42,0.18)] has-[a:focus-visible]:outline-2 has-[a:focus-visible]:outline-offset-2 has-[a:focus-visible]:outline-brand-c500 flex-col gap-4 rounded-xl border border-g200 bg-g0 p-4 sm:flex-row sm:items-center sm:gap-6 sm:px-6">
       <div className="flex min-w-0 flex-1 items-center gap-4">
         <div className="relative size-16 shrink-0">
           <Image src={avatar} alt="" width={69} height={69} className="absolute inset-[-3.68%] size-[68.7px] max-w-none" />
           <Image src="/icons/verified-tick-white.svg" alt="Verified" width={19} height={19} className="absolute right-0 bottom-0 size-[18.8px]" />
         </div>
         <div className="flex min-w-0 flex-col gap-1.5">
-          <h3 className="truncate text-[18px] leading-6 font-medium text-g800">{name}</h3>
+          <h3 className="truncate text-[18px] leading-6 font-medium text-g800">
+            <Link href={profileHref(id)} className="outline-none after:absolute after:inset-0 after:content-['']">
+              {name}
+            </Link>
+          </h3>
           <p className="truncate text-[14px] leading-4 font-medium text-g600">{title}</p>
           <div className="flex items-center gap-2">
             <Image
@@ -166,23 +206,5 @@ function ResultRow({ freelancer }: { freelancer: SearchResult }) {
         </span>
       </div>
     </article>
-  );
-}
-
-function EmptyState({ query, hasFilters, onClear }: { query: string; hasFilters: boolean; onClear: () => void }) {
-  return (
-    <div className="flex flex-col items-center gap-4 rounded-xl border border-g200 bg-g0 px-6 py-16 text-center">
-      <p className="text-[20px] leading-7 font-medium text-g800">No freelancers found</p>
-      <p className="max-w-[420px] text-[16px] leading-6 text-g500">
-        {hasFilters
-          ? "Nothing matches these filters. Try removing a few of them."
-          : `We couldn't find anyone matching “${query.trim()}”. Try a different skill or job title.`}
-      </p>
-      {hasFilters && (
-        <Button variant="secondary" size="md" onClick={onClear}>
-          Clear all filters
-        </Button>
-      )}
-    </div>
   );
 }

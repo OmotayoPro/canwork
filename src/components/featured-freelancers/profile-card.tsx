@@ -1,6 +1,7 @@
 import Image from "next/image";
+import Link from "next/link";
 import { Tag } from "@/components/ui/tag";
-import type { Freelancer } from "@/data/freelancers";
+import { profileHref, type Freelancer } from "@/data/freelancers";
 import { cn } from "@/lib/cn";
 
 const accents: Record<Freelancer["accent"], string> = {
@@ -24,13 +25,14 @@ export function ProfileCard({
   variant?: "featured" | "result";
   className?: string;
 }) {
-  const { name, title, avatar, rating, jobs, topSkill, otherSkills, location, rate, accent } = freelancer;
+  const { id, name, title, avatar, rating, jobs, topSkill, otherSkills, location, rate, accent } = freelancer;
   const result = variant === "result";
 
   return (
     <article
       className={cn(
-        "relative flex shrink-0 flex-col items-center justify-center gap-6 overflow-hidden rounded-xl px-6 py-8",
+        "group/card relative isolate flex shrink-0 flex-col items-center justify-center gap-6 overflow-hidden rounded-xl px-6 py-8",
+        "transition-shadow duration-200 ease-out has-[a:hover]:shadow-[0_8px_24px_-8px_rgba(15,23,42,0.18)] has-[a:focus-visible]:outline-2 has-[a:focus-visible]:outline-offset-2 has-[a:focus-visible]:outline-brand-c500",
         result ? "w-full border border-g200 bg-g0" : "w-[304px] bg-g100",
         className,
       )}
@@ -38,13 +40,14 @@ export function ProfileCard({
       <div
         aria-hidden
         className={cn(
-          "absolute h-[85.77px]",
+          // Behind the (static) content, so the name's stretched link can cover the whole card.
+          "absolute -z-10 h-[85.77px]",
           result ? "-inset-x-[2.1px] top-[-4.42px]" : "top-[-3.42px] left-1/2 w-[308.21px] -translate-x-1/2",
           accents[accent],
         )}
       />
 
-      <div className="relative flex max-w-full flex-col items-center gap-6">
+      <div className="flex max-w-full flex-col items-center gap-6">
         <div className="relative size-[120px]">
           {/* Avatar artwork includes its white ring, so it bleeds 3.68% past the 120px frame */}
           <Image src={avatar} alt="" width={129} height={129} className="absolute inset-[-3.68%] size-[128.82px] max-w-none" />
@@ -59,7 +62,12 @@ export function ProfileCard({
         </div>
 
         <div className="flex max-w-full flex-col items-center gap-2 text-center">
-          <h3 className="max-w-full truncate text-[20px] leading-6 font-medium text-g800">{name}</h3>
+          <h3 className="max-w-full truncate text-[20px] leading-6 font-medium text-g800">
+            {/* Stretched link: the whole card is clickable, but only the name is announced. */}
+            <Link href={profileHref(id)} className="outline-none after:absolute after:inset-0 after:content-['']">
+              {name}
+            </Link>
+          </h3>
           <p className="max-w-full truncate text-[14px] leading-4 font-medium text-g600">{title}</p>
           <div className="flex items-center justify-center gap-2">
             <Image
@@ -80,28 +88,28 @@ export function ProfileCard({
       </div>
 
       {result ? (
-        <div className="relative flex w-full items-center justify-between gap-4 text-[14px] leading-5 font-medium whitespace-nowrap text-g500">
+        <div className="flex w-full items-center justify-between gap-4 text-[14px] leading-5 font-medium whitespace-nowrap text-g500">
           <span className="flex min-w-0 items-start gap-2" title={location}>
             <Image src="/icons/location-sm.svg" alt="" width={20} height={20} className="size-5 shrink-0" />
             <span className="truncate">{location}</span>
           </span>
           <span className="flex shrink-0 items-start gap-2">
             {/* u:bitcoin glyph sits inset 8.33% in a 20px frame */}
-            <span className="relative size-5 shrink-0 overflow-hidden">
+            <span className="pointer-events-none relative size-5 shrink-0 overflow-hidden">
               <Image src="/icons/bitcoin-sm.svg" alt="" width={17} height={17} className="absolute inset-[8.33%] size-[83.34%]" />
             </span>
             {rate}
           </span>
         </div>
       ) : (
-        <div className="relative flex items-center gap-6 text-[16px] leading-6 font-medium whitespace-nowrap text-g500">
+        <div className="flex items-center gap-6 text-[16px] leading-6 font-medium whitespace-nowrap text-g500">
           <span className="flex items-start gap-2">
             <Image src="/icons/location.svg" alt="" width={24} height={24} className="size-6" />
             {location}
           </span>
           <span className="flex items-start gap-2">
             {/* u:bitcoin glyph sits inset 8.33% in a 24px frame */}
-            <span className="relative size-6 shrink-0 overflow-hidden">
+            <span className="pointer-events-none relative size-6 shrink-0 overflow-hidden">
               <Image src="/icons/bitcoin.svg" alt="" width={20} height={20} className="absolute inset-[8.33%] size-[83.34%]" />
             </span>
             {rate}

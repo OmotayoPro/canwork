@@ -13,12 +13,15 @@ const LEAD = 12;
 const PAGES = 4;
 const AUTOPLAY_MS = 5000;
 const SWIPE_THRESHOLD = 50;
+/** Pointer travel (px) before a press counts as a drag rather than a click. */
+const DRAG_SLOP = 6;
 
 export function FreelancerCarousel({ freelancers }: { freelancers: Freelancer[] }) {
   const [page, setPage] = useState(0);
   const [drag, setDrag] = useState<number | null>(null);
   const [paused, setPaused] = useState(false);
   const startX = useRef(0);
+  const dragged = useRef(false);
   const viewportRef = useRef<HTMLDivElement>(null);
   const [lead, setLead] = useState(LEAD);
 
@@ -53,13 +56,18 @@ export function FreelancerCarousel({ freelancers }: { freelancers: Freelancer[] 
   function onPointerDown(e: PointerEvent<HTMLDivElement>) {
     if (e.pointerType === "mouse" && e.button !== 0) return;
     startX.current = e.clientX;
+    dragged.current = false;
     setDrag(0);
-    e.currentTarget.setPointerCapture(e.pointerId);
   }
 
   function onPointerMove(e: PointerEvent<HTMLDivElement>) {
     if (drag === null) return;
     const dx = e.clientX - startX.current;
+    // Capture only once it's clearly a drag, so a plain click still reaches the card link.
+    if (!dragged.current && Math.abs(dx) > DRAG_SLOP) {
+      dragged.current = true;
+      e.currentTarget.setPointerCapture(e.pointerId);
+    }
     // Resist past the first/last page.
     const atEdge = (page === 0 && dx > 0) || (page === PAGES - 1 && dx < 0);
     setDrag(atEdge ? dx * 0.3 : dx);
@@ -85,11 +93,19 @@ export function FreelancerCarousel({ freelancers }: { freelancers: Freelancer[] 
     >
       <div
         ref={viewportRef}
-        className="w-full cursor-grab touch-pan-y select-none active:cursor-grabbing [&_img]:pointer-events-none"
+        className="w-full cursor-grab touch-pan-y select-none active:cursor-grabbing [&_a]:[-webkit-user-drag:none] [&_img]:pointer-events-none"
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
+        onClickCapture={(e) => {
+          // A drag that ends over a card shouldn't open its profile.
+          if (dragged.current) {
+            e.preventDefault();
+            e.stopPropagation();
+            dragged.current = false;
+          }
+        }}
       >
         <div
           className={cn(

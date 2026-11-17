@@ -1,18 +1,11 @@
 "use client";
 
-import { useEffect, useImperativeHandle, useRef, type Ref } from "react";
+import { useEffect, useRef } from "react";
 import { cn } from "@/lib/cn";
 import { DEFAULT_SHADER_SETTINGS, type ShaderSettings } from "./shader-settings";
 
-export type GradientShaderHandle = {
-  /** Fire a ripple from a point given in CSS pixels relative to the canvas' top-left corner. */
-  ripple: (x: number, y: number) => void;
-};
-
 /** Seconds (at speed 1) for one cycle of the in-place churn (turbulence), which runs on a circle in noise space. */
 const LOOP_SECONDS = 30;
-/** Seconds the ripple stays alive (envelope has fully decayed by then). */
-export const RIPPLE_SECONDS = 1.8;
 const MAX_DPR = 1.5;
 
 const VERTEX = /* glsl */ `
@@ -24,11 +17,8 @@ const FRAGMENT = /* glsl */ `
 precision highp float;
 
 uniform vec2  uRes;
-uniform float uDpr;
 uniform float uPhase;      // 0..TAU loop phase
 uniform float uTime;       // seconds, for grain only
-uniform vec4  uRipple;     // xy: origin (device px, GL coords), z: seconds since start (< 0 = off), w: strength
-uniform float uRippleSpeed;
 
 uniform vec3 uC0; uniform vec3 uC1; uniform vec3 uC2; uniform vec3 uC3; uniform vec3 uC4;
 uniform float uDrift;       // forward distance travelled along the flow (accumulated in JS)
@@ -90,21 +80,6 @@ float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.545
 void main() {
   vec2 fc = gl_FragCoord.xy;
 
-  // ---- Ripple: radial wave packet displacing the field ----
-  float glow = 0.0;
-  if (uRipple.z >= 0.0) {
-    float t = uRipple.z;
-    vec2  d = fc - uRipple.xy;
-    float dist = length(d);
-    float radius = t * uRippleSpeed * uDpr;
-    float k = (dist - radius) / (260.0 * uDpr);
-    float env = exp(-k * k * 3.0) * exp(-t * 1.9) * uRipple.w;
-    float wave = sin((dist - radius) / (30.0 * uDpr));
-    vec2 dir = dist > 0.001 ? d / dist : vec2(0.0);
-    fc -= dir * wave * env * 48.0 * uDpr;
-    glow = max(wave, 0.0) * env;
-  }
-
   vec2 uv = fc / uRes;                       // 0..1, y up
   float aspect = uRes.x / uRes.y;
   // Rotate into flow space: +x points along the flow direction, +y across it.
@@ -160,8 +135,7 @@ void main() {
     col = mix(col, uRibbonColor, clamp(inside * mix(0.4, 1.0, rim) * layerOpacity, 0.0, 1.0));
   }
 
-  // ---- Ripple glow + grain ----
-  col += vec3(0.67, 0.9, 1.0) * glow * 0.32;
+  // ---- Grain ----
   col += (hash(gl_FragCoord.xy + fract(uTime * 7.0)) - 0.5) * uGrain;
 
   gl_FragColor = vec4(col, 1.0);
@@ -194,14 +168,11 @@ function hexToRgb(hex: string): [number, number, number] {
 export function GradientShader({
   className,
   settings = DEFAULT_SHADER_SETTINGS,
-  ref,
 }: {
   className?: string;
   settings?: ShaderSettings;
-  ref?: Ref<GradientShaderHandle>;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const rippleRef = useRef<{ x: number; y: number; start: number } | null>(null);
   const settingsRef = useRef(settings);
   const kickRef = useRef<() => void>(() => {});
 
@@ -209,13 +180,6 @@ export function GradientShader({
     settingsRef.current = settings;
     kickRef.current(); // redraw when paused (reduced motion / speed 0)
   }, [settings]);
-
-  useImperativeHandle(ref, () => ({
-    ripple(x, y) {
-      rippleRef.current = { x, y, start: performance.now() };
-      kickRef.current();
-    },
-  }));
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -242,8 +206,7 @@ export function GradientShader({
 
     const u = (name: string) => gl.getUniformLocation(program, name);
     const loc = {
-      res: u("uRes"), dpr: u("uDpr"), phase: u("uPhase"), time: u("uTime"),
-      ripple: u("uRipple"), rippleSpeed: u("uRippleSpeed"),
+      res: u("uRes"), phase: u("uPhase"), time: u("uTime"),
       colors: [u("uC0"), u("uC1"), u("uC2"), u("uC3"), u("uC4")],
       drift: u("uDrift"), wavePhase: u("uWavePhase"), waveAmp: u("uWaveAmp"), waveFreq: u("uWaveFreq"),
       turbulence: u("uTurbulence"),
@@ -275,19 +238,9 @@ export function GradientShader({
       gl.viewport(0, 0, canvas.width, canvas.height);
     };
 
-    const draw = (now: number) => {
+    const draw = () => {
       const s = settingsRef.current;
-      const r = rippleRef.current;
-      let rippleT = -1;
-      if (r) {
-        rippleT = (now - r.start) / 1000;
-        if (rippleT > RIPPLE_SECONDS) {
-          rippleRef.current = null;
-          rippleT = -1;
-        }
-      }
       gl.uniform2f(loc.res, canvas.width, canvas.height);
-      gl.uniform1f(loc.dpr, dpr);
       gl.uniform1f(loc.phase, (loopTime / LOOP_SECONDS) * Math.PI * 2);
       gl.uniform1f(loc.drift, drift);
       gl.uniform1f(loc.wavePhase, wavePhase);
@@ -295,8 +248,6 @@ export function GradientShader({
       gl.uniform1f(loc.waveFreq, s.waveFrequency);
       gl.uniform1f(loc.turbulence, s.turbulence);
       gl.uniform1f(loc.time, clock);
-      gl.uniform4f(loc.ripple, r ? r.x * dpr : 0, r ? canvas.height - r.y * dpr : 0, rippleT, s.rippleStrength);
-      gl.uniform1f(loc.rippleSpeed, s.rippleSpeed);
       s.colors.forEach((hex, i) => gl.uniform3fv(loc.colors[i], hexToRgb(hex)));
       gl.uniform1f(loc.flowAngle, (s.flowAngle * Math.PI) / 180);
       gl.uniform1f(loc.scale, s.scale);
@@ -340,9 +291,9 @@ export function GradientShader({
         // Kept below a large multiple of 2π so float precision holds; the waves' phase multipliers aren't integers.
         ribbonPhase = (ribbonPhase + t * s.ribbonSpeed) % (Math.PI * 2000);
       }
-      draw(now);
+      draw();
       canvas.dataset.ready = "true";
-      if (visible && (moving() || rippleRef.current !== null)) raf = requestAnimationFrame(frame);
+      if (visible && moving()) raf = requestAnimationFrame(frame);
     };
 
     const kick = () => {

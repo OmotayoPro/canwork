@@ -12,6 +12,9 @@ export type Freelancer = {
   accent: "yellow" | "teal" | "cyan" | "blue";
 };
 
+/** Public profile URL for a freelancer. */
+export const profileHref = (id: string) => `/freelancers/${id}`;
+
 // Placeholder content from the Figma file until the API is wired up.
 export const featuredFreelancers: Freelancer[] = [
   { id: "1", name: "Devon Lane", title: "Nursing Assistant", avatar: "/images/freelancers/pfp-1.png", rating: 5, jobs: 24, topSkill: "One Skill", otherSkills: 6, location: "Lagos | Nigeria", rate: "$50/hr", accent: "yellow" },

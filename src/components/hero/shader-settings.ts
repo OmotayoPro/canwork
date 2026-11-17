@@ -37,10 +37,6 @@ export type ShaderSettings = {
   sheen: number;
   /** Film grain. */
   grain: number;
-  /** Ripple displacement multiplier. */
-  rippleStrength: number;
-  /** Ripple front speed, CSS px per second. */
-  rippleSpeed: number;
 
   /** Wavy layer: soft, stacked wave shapes drawn on top of the liquid. 0 turns it off. */
   ribbonCount: number;
@@ -88,8 +84,6 @@ export const DEFAULT_SHADER_SETTINGS: ShaderSettings = {
   bandStrength: 0.6,
   sheen: 0,
   grain: 0,
-  rippleStrength: 1.9,
-  rippleSpeed: 400,
   ribbonCount: 2,
   ribbonColor: "#8fdaff",
   ribbonOpacity: 0.54,
@@ -161,13 +155,6 @@ export const SHADER_CONTROLS: { title: string; sliders: SliderSpec[] }[] = [
     sliders: [
       { key: "overlay", label: "Black overlay", min: 0, max: 0.8, step: 0.01 },
       { key: "grain", label: "Grain", min: 0, max: 0.2, step: 0.005 },
-    ],
-  },
-  {
-    title: "Ripple",
-    sliders: [
-      { key: "rippleStrength", label: "Strength", min: 0, max: 3, step: 0.05 },
-      { key: "rippleSpeed", label: "Speed (px/s)", min: 400, max: 3000, step: 50 },
     ],
   },
 ];

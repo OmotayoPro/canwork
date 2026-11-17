@@ -1,18 +1,14 @@
 "use client";
 
-import { useRef } from "react";
 import { Navbar } from "@/components/navbar";
 import { HeroSearch } from "@/components/search/hero-search";
-import { GradientShader, type GradientShaderHandle } from "./gradient-shader";
+import { GradientShader } from "./gradient-shader";
 import { DEFAULT_SHADER_SETTINGS } from "./shader-settings";
 
 export function Hero() {
-  const sectionRef = useRef<HTMLElement>(null);
-  const shaderRef = useRef<GradientShaderHandle>(null);
-
   return (
-    <section ref={sectionRef} className="relative isolate overflow-hidden lg:h-[654px]">
-      <GradientShader ref={shaderRef} settings={DEFAULT_SHADER_SETTINGS} className="absolute inset-0 -z-10" />
+    <section className="relative isolate overflow-hidden lg:h-[654px]">
+      <GradientShader settings={DEFAULT_SHADER_SETTINGS} className="absolute inset-0 -z-10" />
 
       <Navbar />
 
@@ -29,7 +25,7 @@ export function Hero() {
             </p>
           </div>
 
-          <HeroSearch sectionRef={sectionRef} shaderRef={shaderRef} />
+          <HeroSearch />
         </div>
       </div>
     </section>
