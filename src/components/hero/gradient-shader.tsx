@@ -2,16 +2,18 @@
 
 import { useEffect, useImperativeHandle, useRef, type Ref } from "react";
 import { cn } from "@/lib/cn";
+import { DEFAULT_SHADER_SETTINGS, type ShaderSettings } from "./shader-settings";
 
 export type GradientShaderHandle = {
   /** Fire a ripple from a point given in CSS pixels relative to the canvas' top-left corner. */
   ripple: (x: number, y: number) => void;
 };
 
-/** Seconds for one full cycle of the background motion. Every time term is a whole multiple of this, so it loops seamlessly. */
-const LOOP_SECONDS = 24;
+/** Seconds (at speed 1) for one full cycle. Motion runs on a circle in noise space, so it loops seamlessly. */
+const LOOP_SECONDS = 30;
 /** Seconds the ripple stays alive (envelope has fully decayed by then). */
 export const RIPPLE_SECONDS = 1.8;
+const MAX_DPR = 1.5;
 
 const VERTEX = /* glsl */ `
 attribute vec2 aPos;
@@ -21,84 +23,111 @@ void main() { gl_Position = vec4(aPos, 0.0, 1.0); }
 const FRAGMENT = /* glsl */ `
 precision highp float;
 
-uniform vec2  uRes;     // drawing buffer size, device px
-uniform float uTime;    // seconds
-uniform vec3  uRipple;  // xy: origin (device px, GL coords), z: seconds since start, < 0 = inactive
+uniform vec2  uRes;
 uniform float uDpr;
+uniform float uPhase;      // 0..TAU loop phase
+uniform float uTime;       // seconds, for grain only
+uniform vec4  uRipple;     // xy: origin (device px, GL coords), z: seconds since start (< 0 = off), w: strength
+uniform float uRippleSpeed;
+
+uniform vec3 uC0; uniform vec3 uC1; uniform vec3 uC2; uniform vec3 uC3; uniform vec3 uC4;
+uniform float uFlowAngle, uScale, uWarp, uVertical, uContrast, uOffset;
+uniform float uBands, uBandSharp, uBandStrength, uSheen, uGrain;
 
 #define TAU 6.28318530718
-const float LOOP = ${LOOP_SECONDS.toFixed(1)};
 
-// Macro (not a function) so integer literals are accepted — GLSL ES 1.0 has no implicit int→float.
-#define rgb(r, g, b) (vec3(r, g, b) / 255.0)
+// 2D simplex noise — Ashima Arts / Stefan Gustavson (MIT).
+vec3 permute(vec3 x) { return mod(((x * 34.0) + 1.0) * x, 289.0); }
+float snoise(vec2 v) {
+  const vec4 C = vec4(0.211324865405187, 0.366025403784439, -0.577350269189626, 0.024390243902439);
+  vec2 i  = floor(v + dot(v, C.yy));
+  vec2 x0 = v - i + dot(i, C.xx);
+  vec2 i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+  vec4 x12 = x0.xyxy + C.xxzz;
+  x12.xy -= i1;
+  i = mod(i, 289.0);
+  vec3 p = permute(permute(i.y + vec3(0.0, i1.y, 1.0)) + i.x + vec3(0.0, i1.x, 1.0));
+  vec3 m = max(0.5 - vec3(dot(x0, x0), dot(x12.xy, x12.xy), dot(x12.zw, x12.zw)), 0.0);
+  m = m * m; m = m * m;
+  vec3 x = 2.0 * fract(p * C.www) - 1.0;
+  vec3 h = abs(x) - 0.5;
+  vec3 ox = floor(x + 0.5);
+  vec3 a0 = x - ox;
+  m *= 1.79284291400159 - 0.85373472095314 * (a0 * a0 + h * h);
+  vec3 g;
+  g.x  = a0.x  * x0.x   + h.x  * x0.y;
+  g.yz = a0.yz * x12.xz + h.yz * x12.yw;
+  return 130.0 * dot(m, g);
+}
+
+float fbm(vec2 p) {
+  float v = 0.0, amp = 0.5;
+  mat2 r = mat2(0.8, -0.6, 0.6, 0.8);
+  for (int i = 0; i < 3; i++) { v += amp * snoise(p); p = r * p * 1.9; amp *= 0.45; }
+  return v; // ~[-1, 1]
+}
+
+// A point moving on a circle: sampling noise along it makes the animation loop exactly.
+vec2 orbit(float phase, float r) { return r * vec2(cos(uPhase + phase), sin(uPhase + phase)); }
+
+vec3 palette(float t) {
+  t = clamp(t, 0.0, 1.0) * 4.0;
+  vec3 c = mix(uC0, uC1, smoothstep(0.0, 1.0, clamp(t,       0.0, 1.0)));
+  c      = mix(c,   uC2, smoothstep(0.0, 1.0, clamp(t - 1.0, 0.0, 1.0)));
+  c      = mix(c,   uC3, smoothstep(0.0, 1.0, clamp(t - 2.0, 0.0, 1.0)));
+  c      = mix(c,   uC4, smoothstep(0.0, 1.0, clamp(t - 3.0, 0.0, 1.0)));
+  return c;
+}
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
-
-// Soft-edged "below this curve" mask.
-float below(float y, float edge, float soft) { return 1.0 - smoothstep(edge - soft, edge + soft, y); }
-
-float blob(vec2 p, vec2 c, float k) { vec2 d = p - c; return exp(-dot(d, d) * k); }
 
 void main() {
   vec2 fc = gl_FragCoord.xy;
 
-  // ---- Ripple: a radial wave packet that displaces the field and leaves a soft glow ----
+  // ---- Ripple: radial wave packet displacing the field ----
   float glow = 0.0;
   if (uRipple.z >= 0.0) {
     float t = uRipple.z;
     vec2  d = fc - uRipple.xy;
     float dist = length(d);
-    float radius = t * 1300.0 * uDpr;              // front speed
-    float width  = 260.0 * uDpr;                   // packet width
-    float k = (dist - radius) / width;
-    float env = exp(-k * k * 3.0) * exp(-t * 1.9); // packet envelope × decay
+    float radius = t * uRippleSpeed * uDpr;
+    float k = (dist - radius) / (260.0 * uDpr);
+    float env = exp(-k * k * 3.0) * exp(-t * 1.9) * uRipple.w;
     float wave = sin((dist - radius) / (30.0 * uDpr));
     vec2 dir = dist > 0.001 ? d / dist : vec2(0.0);
     fc -= dir * wave * env * 48.0 * uDpr;
     glow = max(wave, 0.0) * env;
   }
 
-  vec2  uv = fc / uRes;              // 0..1, y up
+  vec2 uv = fc / uRes;                       // 0..1, y up
   float aspect = uRes.x / uRes.y;
-  float x = uv.x * aspect;           // horizontal, in hero-heights
-  float y = uv.y;
-  vec2  p = vec2(x, y);
-  float a = uTime * TAU / LOOP;      // loop phase
+  vec2 p = (uv - 0.5) * vec2(aspect, 1.0);
+  float ca = cos(uFlowAngle), sa = sin(uFlowAngle);
+  p = mat2(ca, -sa, sa, ca) * p * uScale * 0.55; // 0.55: scale 1 ≈ two or three large forms across the hero
 
-  // ---- Base: deep blue sky, brighter towards the bottom ----
-  vec3 col = mix(rgb(20, 150, 228), rgb(4, 102, 198), smoothstep(0.30, 0.95, y));
+  // ---- Liquid field: two levels of domain warping ----
+  vec2 q = vec2(fbm(p + orbit(0.0, 0.6)),
+                fbm(p + vec2(5.2, 1.3) + orbit(2.1, 0.6)));
+  vec2 r = vec2(fbm(p + uWarp * q + vec2(1.7, 9.2) + orbit(4.2, 0.4)),
+                fbm(p + uWarp * q + vec2(8.3, 2.8) + orbit(1.0, 0.4)));
+  float f = fbm(p + uWarp * r);
 
-  // Drifting light pools
-  col = mix(col, rgb(16, 168, 236), 0.60 * blob(p, vec2(aspect * (0.70 + 0.06 * sin(a)), 0.88 + 0.05 * cos(2.0 * a)), 2.6));
-  col = mix(col, rgb(4, 96, 190),   0.45 * blob(p, vec2(aspect * (0.18 + 0.05 * cos(a)), 0.98), 3.5));
-  col = mix(col, rgb(118, 204, 242), 0.55 * blob(p, vec2(aspect * (0.62 + 0.07 * cos(a)), 0.46 + 0.05 * sin(2.0 * a)), 6.0));
+  // ---- Map to the palette ----
+  float field = clamp((f * 0.5) * uContrast + 0.5, 0.0, 1.0);
+  float t = mix(field, 1.0 - uv.y, uVertical) + uOffset;
 
-  // ---- Wave 1: soft high ridge across the sky ----
-  float y1 = 0.60 + 0.070 * sin(x * 1.9 + a + 0.5) + 0.035 * sin(x * 3.7 - 2.0 * a);
-  col = mix(col, rgb(4, 92, 186), 0.22 * smoothstep(0.0, 0.10, y - y1) * (1.0 - smoothstep(0.10, 0.24, y - y1)));
-  col = mix(col, rgb(52, 176, 238), 0.50 * below(y, y1, 0.045));
+  // ---- Liquid-metal banding: contour streaks following the field ----
+  float on = step(0.01, uBands);
+  float wave = 0.5 + 0.5 * sin((f + length(r) * 0.35) * uBands * TAU * 0.5);
+  float crest = pow(wave, uBandSharp);
+  t += (wave - 0.5) * uBandStrength * on;
 
-  // ---- Wave 2: right-hand cyan sheet sweeping up ----
-  float y2 = 0.20 + 0.42 * smoothstep(0.45, 1.05, uv.x + 0.04 * sin(a)) + 0.03 * sin(x * 2.6 - a);
-  col = mix(col, rgb(36, 182, 242), 0.55 * below(y, y2, 0.012));
+  vec3 col = palette(t);
+  col = mix(col, vec3(1.0), crest * uSheen * on);
 
-  // ---- Wave 3: crisp teal → mint band near the bottom ----
-  float y3 = 0.27 + 0.075 * sin(x * 1.5 - a + 1.2) + 0.028 * sin(x * 3.1 + 2.0 * a);
-  vec3 teal = mix(rgb(44, 214, 212), rgb(112, 242, 196), blob(p, vec2(aspect * (0.24 + 0.05 * sin(a)), 0.0), 3.0));
-  float m3 = below(y, y3, 0.006);
-  col = mix(col, teal, 0.85 * m3);
-  col += vec3(0.20) * exp(-pow((y - y3) / 0.005, 2.0));                // edge highlight
-  col = mix(col, vec3(1.0), 0.22 * m3 * smoothstep(y3, 0.0, y));        // haze to the bottom
-
-  // ---- Wave 4: pale glassy sheet rising on the right ----
-  float y4 = -0.10 + 0.40 * smoothstep(0.42, 1.0, uv.x + 0.05 * cos(a)) + 0.025 * sin(x * 2.2 + 2.0 * a);
-  float m4 = below(y, y4, 0.008);
-  col = mix(col, rgb(176, 232, 252), 0.55 * m4);
-  col += vec3(0.25) * exp(-pow((y - y4) / 0.004, 2.0));
-
-  // ---- Ripple glow + dithering ----
-  col += rgb(170, 230, 255) * glow * 0.32;
-  col += (hash(gl_FragCoord.xy + fract(uTime)) - 0.5) / 255.0 * 1.5;
+  // ---- Ripple glow + grain ----
+  col += vec3(0.67, 0.9, 1.0) * glow * 0.32;
+  col += (hash(gl_FragCoord.xy + fract(uTime * 7.0)) - 0.5) * uGrain;
 
   gl_FragColor = vec4(col, 1.0);
 }
@@ -117,14 +146,34 @@ function compile(gl: WebGLRenderingContext, type: number, source: string) {
   return shader;
 }
 
+function hexToRgb(hex: string): [number, number, number] {
+  const n = parseInt(hex.replace("#", ""), 16);
+  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+}
+
 /**
- * Looping gradient-wave background drawn with WebGL.
+ * Liquid multi-stop gradient drawn with WebGL: domain-warped noise mapped onto a 5-colour ramp,
+ * with optional liquid-metal banding. Settings update live without recompiling.
  * Falls back to a static CSS gradient (on the wrapper) when WebGL is unavailable.
  */
-export function GradientShader({ className, ref }: { className?: string; ref?: Ref<GradientShaderHandle> }) {
+export function GradientShader({
+  className,
+  settings = DEFAULT_SHADER_SETTINGS,
+  ref,
+}: {
+  className?: string;
+  settings?: ShaderSettings;
+  ref?: Ref<GradientShaderHandle>;
+}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rippleRef = useRef<{ x: number; y: number; start: number } | null>(null);
+  const settingsRef = useRef(settings);
   const kickRef = useRef<() => void>(() => {});
+
+  useEffect(() => {
+    settingsRef.current = settings;
+    kickRef.current(); // redraw when paused (reduced motion / speed 0)
+  }, [settings]);
 
   useImperativeHandle(ref, () => ({
     ripple(x, y) {
@@ -149,7 +198,6 @@ export function GradientShader({ className, ref }: { className?: string; ref?: R
     if (!gl.getProgramParameter(program, gl.LINK_STATUS)) return;
     gl.useProgram(program);
 
-    // One oversized triangle covers the viewport.
     const buffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
@@ -157,20 +205,26 @@ export function GradientShader({ className, ref }: { className?: string; ref?: R
     gl.enableVertexAttribArray(aPos);
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
 
-    const uRes = gl.getUniformLocation(program, "uRes");
-    const uTime = gl.getUniformLocation(program, "uTime");
-    const uRipple = gl.getUniformLocation(program, "uRipple");
-    const uDpr = gl.getUniformLocation(program, "uDpr");
+    const u = (name: string) => gl.getUniformLocation(program, name);
+    const loc = {
+      res: u("uRes"), dpr: u("uDpr"), phase: u("uPhase"), time: u("uTime"),
+      ripple: u("uRipple"), rippleSpeed: u("uRippleSpeed"),
+      colors: [u("uC0"), u("uC1"), u("uC2"), u("uC3"), u("uC4")],
+      flowAngle: u("uFlowAngle"), scale: u("uScale"), warp: u("uWarp"), vertical: u("uVertical"),
+      contrast: u("uContrast"), offset: u("uOffset"), bands: u("uBands"), bandSharp: u("uBandSharp"),
+      bandStrength: u("uBandStrength"), sheen: u("uSheen"), grain: u("uGrain"),
+    };
 
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
     let dpr = 1;
     let raf = 0;
     let visible = true;
-    let time = 4; // start a little into the loop so the first frame isn't the "rest" pose
+    let loopTime = 6; // seconds into the loop
+    let clock = 0;
     let last = performance.now();
 
     const resize = () => {
-      dpr = Math.min(window.devicePixelRatio || 1, 2);
+      dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
       const { width, height } = canvas.getBoundingClientRect();
       canvas.width = Math.max(1, Math.round(width * dpr));
       canvas.height = Math.max(1, Math.round(height * dpr));
@@ -178,6 +232,7 @@ export function GradientShader({ className, ref }: { className?: string; ref?: R
     };
 
     const draw = (now: number) => {
+      const s = settingsRef.current;
       const r = rippleRef.current;
       let rippleT = -1;
       if (r) {
@@ -187,22 +242,38 @@ export function GradientShader({ className, ref }: { className?: string; ref?: R
           rippleT = -1;
         }
       }
-      gl.uniform2f(uRes, canvas.width, canvas.height);
-      gl.uniform1f(uTime, time);
-      gl.uniform1f(uDpr, dpr);
-      gl.uniform3f(uRipple, r ? r.x * dpr : 0, r ? canvas.height - r.y * dpr : 0, rippleT);
+      gl.uniform2f(loc.res, canvas.width, canvas.height);
+      gl.uniform1f(loc.dpr, dpr);
+      gl.uniform1f(loc.phase, (loopTime / LOOP_SECONDS) * Math.PI * 2);
+      gl.uniform1f(loc.time, clock);
+      gl.uniform4f(loc.ripple, r ? r.x * dpr : 0, r ? canvas.height - r.y * dpr : 0, rippleT, s.rippleStrength);
+      gl.uniform1f(loc.rippleSpeed, s.rippleSpeed);
+      s.colors.forEach((hex, i) => gl.uniform3fv(loc.colors[i], hexToRgb(hex)));
+      gl.uniform1f(loc.flowAngle, (s.flowAngle * Math.PI) / 180);
+      gl.uniform1f(loc.scale, s.scale);
+      gl.uniform1f(loc.warp, s.warp);
+      gl.uniform1f(loc.vertical, s.vertical);
+      gl.uniform1f(loc.contrast, s.contrast);
+      gl.uniform1f(loc.offset, s.offset);
+      gl.uniform1f(loc.bands, s.bands);
+      gl.uniform1f(loc.bandSharp, s.bandSharpness);
+      gl.uniform1f(loc.bandStrength, s.bandStrength);
+      gl.uniform1f(loc.sheen, s.sheen);
+      gl.uniform1f(loc.grain, s.grain);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     };
+
+    const moving = () => !reduceMotion.matches && settingsRef.current.speed > 0;
 
     const frame = (now: number) => {
       raf = 0;
       const dt = Math.min((now - last) / 1000, 0.1);
       last = now;
-      if (!reduceMotion.matches) time = (time + dt) % LOOP_SECONDS;
+      clock += dt;
+      if (moving()) loopTime = (loopTime + dt * settingsRef.current.speed) % LOOP_SECONDS;
       draw(now);
       canvas.dataset.ready = "true";
-      const animating = !reduceMotion.matches || rippleRef.current !== null;
-      if (visible && animating) raf = requestAnimationFrame(frame);
+      if (visible && (moving() || rippleRef.current !== null)) raf = requestAnimationFrame(frame);
     };
 
     const kick = () => {
@@ -225,8 +296,7 @@ export function GradientShader({ className, ref }: { className?: string; ref?: R
     });
     io.observe(canvas);
 
-    const onMotionChange = () => kick();
-    reduceMotion.addEventListener("change", onMotionChange);
+    reduceMotion.addEventListener("change", kick);
 
     resize();
     kick();
@@ -235,7 +305,7 @@ export function GradientShader({ className, ref }: { className?: string; ref?: R
       cancelAnimationFrame(raf);
       ro.disconnect();
       io.disconnect();
-      reduceMotion.removeEventListener("change", onMotionChange);
+      reduceMotion.removeEventListener("change", kick);
       kickRef.current = () => {};
       gl.deleteBuffer(buffer);
       gl.deleteProgram(program);
@@ -244,15 +314,14 @@ export function GradientShader({ className, ref }: { className?: string; ref?: R
     };
   }, []);
 
+  const [c0, c1, c2, c3, c4] = settings.colors;
+
   return (
     <div
       aria-hidden
-      className={cn(
-        "pointer-events-none overflow-hidden",
-        // Static fallback, also what shows for the instant before WebGL paints.
-        "bg-[linear-gradient(180deg,#0466c6_0%,#0d8fe0_45%,#3cb6ef_68%,#2cd6d2_78%,#7fe9cf_100%)]",
-        className,
-      )}
+      className={cn("pointer-events-none overflow-hidden", className)}
+      // Static fallback, also what shows for the instant before WebGL paints.
+      style={{ background: `linear-gradient(180deg, ${c0} 0%, ${c1} 30%, ${c2} 55%, ${c3} 78%, ${c4} 100%)` }}
     >
       <canvas
         ref={canvasRef}

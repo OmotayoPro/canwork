@@ -1,16 +1,52 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Navbar } from "@/components/navbar";
 import { Button } from "@/components/ui/button";
 import { TagButton } from "@/components/ui/tag";
 import { GradientShader, type GradientShaderHandle } from "./gradient-shader";
+import { ShaderControls } from "./shader-controls";
+import { DEFAULT_SHADER_SETTINGS, type ShaderSettings } from "./shader-settings";
 
 const suggestions = ["Web design", "UI/UX Design", "Front End", "Copyrighting", "Angular", "Java Script"];
 
 /** How long the ripple plays before we move on to the results page. */
 const NAVIGATE_AFTER_MS = 900;
+const SETTINGS_KEY = "canwork:hero-shader";
+
+/** Shader settings, tweakable via the controls panel (shown in dev, or with ?shader in the URL). */
+function useShaderSettings() {
+  const [settings, setSettings] = useState<ShaderSettings>(DEFAULT_SHADER_SETTINGS);
+  const [showControls, setShowControls] = useState(false);
+
+  useEffect(() => {
+    const enabled =
+      process.env.NODE_ENV === "development" || new URLSearchParams(window.location.search).has("shader");
+    if (!enabled) return;
+    let saved: ShaderSettings | null = null;
+    try {
+      const raw = localStorage.getItem(SETTINGS_KEY);
+      if (raw) saved = { ...DEFAULT_SHADER_SETTINGS, ...JSON.parse(raw) };
+    } catch {
+      /* storage unavailable */
+    }
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reading browser-only state after mount
+    setShowControls(true);
+    if (saved) setSettings(saved);
+  }, []);
+
+  const update = (next: ShaderSettings) => {
+    setSettings(next);
+    try {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
+    } catch {
+      /* storage unavailable */
+    }
+  };
+
+  return { settings, update, showControls };
+}
 
 export function Hero() {
   const router = useRouter();
@@ -20,6 +56,7 @@ export function Hero() {
   const shaderRef = useRef<GradientShaderHandle>(null);
   const [query, setQuery] = useState("");
   const [searching, setSearching] = useState(false);
+  const shader = useShaderSettings();
 
   function search(term: string, origin: Element | null) {
     const q = term.trim();
@@ -51,7 +88,8 @@ export function Hero() {
 
   return (
     <section ref={sectionRef} className="relative isolate overflow-hidden lg:h-[654px]">
-      <GradientShader ref={shaderRef} className="absolute inset-0 -z-10" />
+      <GradientShader ref={shaderRef} settings={shader.settings} className="absolute inset-0 -z-10" />
+      {shader.showControls && <ShaderControls settings={shader.settings} onChange={shader.update} />}
 
       <Navbar />
 
